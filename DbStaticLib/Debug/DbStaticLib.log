@@ -1,0 +1,34 @@
+﻿  DatabaseConnectionPool.cpp
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2022,48): warning C4244: 'argument': conversion from '_Ty1' to 'const unsigned int', possible loss of data
+          with
+          [
+              _Ty1=std::chrono::system_clock::rep
+          ]
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2037): message : see reference to alias template instantiation 'jwt::details::is_substr_start_end_index_signature<jwt::traits::kazuho_picojson::string_type,jwt::traits::kazuho_picojson::integer_type>' being compiled
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2082): message : see reference to class template instantiation 'jwt::details::is_valid_json_string<value_type,string_type,integer_type>' being compiled
+          with
+          [
+              value_type=jwt::traits::kazuho_picojson::value_type,
+              string_type=jwt::traits::kazuho_picojson::string_type,
+              integer_type=jwt::traits::kazuho_picojson::integer_type
+          ]
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2113): message : see reference to class template instantiation 'jwt::details::is_valid_json_types<jwt::traits::kazuho_picojson::value_type,jwt::traits::kazuho_picojson::object_type,jwt::traits::kazuho_picojson::array_type,jwt::traits::kazuho_picojson::string_type,jwt::traits::kazuho_picojson::number_type,jwt::traits::kazuho_picojson::integer_type,jwt::traits::kazuho_picojson::boolean_type>' being compiled
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(3207): message : see reference to class template instantiation 'jwt::basic_claim<jwt::traits::kazuho_picojson>' being compiled
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\traits\kazuho-picojson\defaults.h(19): message : see reference to class template instantiation 'jwt::verifier<jwt::default_clock,jwt::traits::kazuho_picojson>' being compiled
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2021,96): warning C4244: 'argument': conversion from '_Ty1' to 'const unsigned int', possible loss of data
+          with
+          [
+              _Ty1=std::chrono::system_clock::rep
+          ]
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2027,96): warning C4244: 'argument': conversion from '_Ty1' to 'const unsigned int', possible loss of data
+          with
+          [
+              _Ty1=std::chrono::system_clock::rep
+          ]
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2038): message : see reference to alias template instantiation 'jwt::details::is_substr_start_index_signature<jwt::traits::kazuho_picojson::string_type,jwt::traits::kazuho_picojson::integer_type>' being compiled
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2180,85): warning C4244: 'argument': conversion from 'double' to '__time64_t', possible loss of data
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2178): message : while compiling class template member function 'jwt::date jwt::basic_claim<jwt::traits::kazuho_picojson>::as_date(void) const'
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2394): message : see reference to function template instantiation 'jwt::date jwt::basic_claim<jwt::traits::kazuho_picojson>::as_date(void) const' being compiled
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(3207): message : see reference to class template instantiation 'jwt::basic_claim<jwt::traits::kazuho_picojson>' being compiled
+C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\traits\kazuho-picojson\defaults.h(19): message : see reference to class template instantiation 'jwt::verifier<jwt::default_clock,jwt::traits::kazuho_picojson>' being compiled
+  DbStaticLib.vcxproj -> C:\Users\Sagi\source\repos\DbStaticLib\Debug\DbStaticLib.lib
