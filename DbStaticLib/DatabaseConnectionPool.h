@@ -9,7 +9,6 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
-
 #include "DatabaseConnector.h"
 
 class DatabaseConnectionPool {
@@ -24,7 +23,7 @@ public:
 
 private:
     void HealthCheckLoop();
-    bool IsConnectionValid(std::shared_ptr<DatabaseConnector>& conn);
+    bool IsConnectionValid(const std::shared_ptr<DatabaseConnector>& conn);
     void RefillPoolIfNeeded();
 
     const size_t poolSize = 10;

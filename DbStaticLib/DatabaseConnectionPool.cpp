@@ -23,9 +23,6 @@ DatabaseConnectionPool::~DatabaseConnectionPool() {
     }
 }
 
-
-
-
 std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire()
 {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -84,11 +81,54 @@ void DatabaseConnectionPool::HealthCheckLoop()
     }
 }
 
-bool DatabaseConnectionPool::IsConnectionValid(std::shared_ptr<DatabaseConnector>& conn)
+bool DatabaseConnectionPool::IsConnectionValid(const std::shared_ptr<DatabaseConnector>& conn)
 {
-    return false;
+    if (!conn) return false;
+
+    return conn->IsHealthy();
 }
 
 void DatabaseConnectionPool::RefillPoolIfNeeded()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Remove invalid connections from both queues and vector
+    connections_.erase(
+        std::remove_if(connections_.begin(), connections_.end(),
+            [this](const std::shared_ptr<DatabaseConnector>& conn) {
+                return !IsConnectionValid(conn);
+            }),
+        connections_.end()
+                );
+
+    std::queue<std::shared_ptr<DatabaseConnector>> newQueue;
+    while (!freeConnections_.empty()) {
+        auto conn = freeConnections_.front();
+        freeConnections_.pop();
+
+        if (IsConnectionValid(conn)) {
+            newQueue.push(conn);
+        }
+    }
+    std::swap(freeConnections_, newQueue);
+
+    // Refill to maintain poolSize
+    while (connections_.size() < poolSize) {
+        auto newConn = std::make_shared<DatabaseConnector>(encryptedConfigPath_, key_, IV);
+        newConn->ConnectToDatabase();
+
+        if (newConn->GetConnectedFlag()) {
+            connections_.push_back(newConn);
+            freeConnections_.push(newConn);
+        }
+        else {
+            // Optional: log the failed connection attempt
+            break; // prevent infinite loop if DB is down
+        }
+    }
+
+    // Notify waiting threads that a connection might now be available
+    condition_.notify_all();
 }
+
+

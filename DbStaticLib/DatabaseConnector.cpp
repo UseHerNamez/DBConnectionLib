@@ -130,7 +130,6 @@ bool DatabaseConnector::DoesUsernameExist(const std::string& username) {
     catch (sql::SQLException& e) {
         std::cerr << "MySQL Error: " << e.what() << std::endl;
     }
-    // Handle the error appropriately in your application
     return false;
 }
 
@@ -190,7 +189,6 @@ bool DatabaseConnector::RegisterUser(const std::string& username, const std::str
         return true;  // Registration successful
     }
     catch (sql::SQLException& e) {
-        // Handle the error appropriately in your application
         std::cerr << "Database error: " << e.what() << std::endl;
         return false;  // Registration failure
     }
@@ -231,7 +229,6 @@ std::string DatabaseConnector::GetCharactersInfoByUserId(int userId) // only for
     std::string charactersInfo;
 
     try {
-        // Your SQL query to retrieve characters' info based on the user's ID
         std::string query = "SELECT character_name, level, gender, appearance FROM characters_table WHERE user_id = ?";
 
         // Prepare and execute the query
@@ -239,7 +236,6 @@ std::string DatabaseConnector::GetCharactersInfoByUserId(int userId) // only for
         preparedStatement->setInt(1, userId);
         sql::ResultSet* resultSet = preparedStatement->executeQuery();
 
-        // Process the result set and construct the characters' info string
         while (resultSet->next()) {
             std::string characterName = resultSet->getString("character_name");
             std::string level = resultSet->getString("level");
