@@ -1,17 +1,14 @@
 // DatabaseConnector.h
 #pragma once
 
-#include <driver.h>
-#include <connection.h>
-#include <exception.h>
 #include <iostream>
 #include <fstream>
 #include <string>
-#include "EncryptionUtils.h"
-#include <sstream>
-#include <resultset.h>
 #include <optional>
-#include <prepared_statement.h>
+#include <sstream>
+#include <mysqlx/xdevapi.h>
+#include "EncryptionUtils.h"
+
 
 class DatabaseConnector {
 public:

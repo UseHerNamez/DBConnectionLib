@@ -220,7 +220,7 @@ std::string DatabaseConnector::DeleteCharacter(int userId, const std::string& ch
     }
     catch (sql::SQLException& e) {
         std::cerr << "SQL Error while deleting character: " << e.what() << std::endl;
-        return "DATABASE_ERROR";
+        return "DATABASE_ERROR SQL_e";
     }
 }
 
