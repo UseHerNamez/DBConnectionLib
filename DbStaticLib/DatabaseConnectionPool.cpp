@@ -1,17 +1,70 @@
 #include "pch.h"
 #include "DatabaseConnectionPool.h"
+#include <mysqlx/xdevapi.h>
 
 DatabaseConnectionPool::DatabaseConnectionPool(
     const std::string& encryptedConfigPath,
     const std::string& key)
+    : encryptedConfigPath_(encryptedConfigPath), key_(key), stopHealthCheck_(false)
 {
-    for (size_t i = 0; i < poolSize; ++i) {
-        auto conn = std::make_shared<DatabaseConnector>(encryptedConfigPath, key, IV); //IV from EncryptionUtils.h
-        conn->ConnectToDatabase();
-        connections_.push_back(conn);
-        freeConnections_.push(conn);
+    // 1. Read and decrypt config
+    std::ifstream encryptedConfigFile(encryptedConfigPath_, std::ios::binary);
+    if (!encryptedConfigFile.is_open()) {
+        throw std::runtime_error("Failed to open encrypted configuration file.");
     }
-    stopHealthCheck_ = false;
+
+    std::string encryptedCredentials((std::istreambuf_iterator<char>(encryptedConfigFile)),
+        std::istreambuf_iterator<char>());
+    encryptedConfigFile.close();
+
+    std::string decryptedCredentials = decrypt(encryptedCredentials, key_);
+    if (decryptedCredentials.empty()) {
+        throw std::runtime_error("Failed to decrypt credentials.");
+    }
+
+    // 2. Parse config values
+    std::istringstream decryptedStream(decryptedCredentials);
+    std::string line;
+
+    while (std::getline(decryptedStream, line)) {
+        size_t separatorPos = line.find('=');
+        if (separatorPos == std::string::npos) continue;
+
+        std::string key = line.substr(0, separatorPos);
+        std::string value = line.substr(separatorPos + 1);
+
+        key.erase(std::remove_if(key.begin(), key.end(), ::isspace), key.end());
+        value.erase(std::remove_if(value.begin(), value.end(), ::isspace), value.end());
+        std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+
+        if (key == "address") address = value;
+        else if (key == "username") username = value;
+        else if (key == "password") password = value;
+        else if (key == "sslca") sslCa = value;
+    }
+
+    // 3. Create connections individually, each with its own Session
+    try {
+        for (size_t i = 0; i < poolSize; ++i) {
+            mysqlx::SessionSettings settings(
+                address, 33060,
+                username,
+                password,
+                sslCa.empty() ? nullptr : sslCa.c_str()
+            );
+
+            auto session = std::make_shared<mysqlx::Session>(settings);
+            auto conn = std::make_shared<DatabaseConnector>(session);
+            connections_.push_back(conn);
+            freeConnections_.push(conn);
+        }
+    }
+    catch (const mysqlx::Error& err) {
+        std::cerr << "Failed to create MySQL session: " << err.what() << std::endl;
+        throw;
+    }
+
+    // Start health check thread
     healthCheckThread_ = std::thread(&DatabaseConnectionPool::HealthCheckLoop, this);
 }
 
@@ -26,57 +79,56 @@ DatabaseConnectionPool::~DatabaseConnectionPool() {
 std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire()
 {
     std::unique_lock<std::mutex> lock(mutex_);
-
-    // Wait until a connection is available
     condition_.wait(lock, [this]() { return !freeConnections_.empty(); });
 
-    // Get a connection from the queue
     auto conn = freeConnections_.front();
     freeConnections_.pop();
 
-    // Wrap connection in a shared_ptr with a custom deleter that returns it to the pool
     return std::shared_ptr<DatabaseConnector>(
-        conn.get(), //shared_ptr has a constructor which takes: 1. the pointer (conn.get) and 2. a custom delete function... lambda is the deleter.
+        conn.get(),
         [this](DatabaseConnector* ptr) {
             std::unique_lock<std::mutex> lock(mutex_);
             freeConnections_.push(std::shared_ptr<DatabaseConnector>(ptr, [](DatabaseConnector*) {}));
-            // The inner shared_ptr with empty deleter prevents double deletion
             condition_.notify_one();
-        });
+        }
+    );
 }
 
 void DatabaseConnectionPool::HealthCheckLoop()
 {
-    while (!stopHealthCheck_)
-    {
+    while (!stopHealthCheck_) {
         std::this_thread::sleep_for(std::chrono::minutes(15));
-
         std::lock_guard<std::mutex> lock(mutex_);
 
-        size_t size = freeConnections_.size();
         std::queue<std::shared_ptr<DatabaseConnector>> updatedQueue;
 
-        for (size_t i = 0; i < size; ++i)
-        {
+        while (!freeConnections_.empty()) {
             auto conn = freeConnections_.front();
             freeConnections_.pop();
 
-            if (!conn || !conn->IsHealthy())
-            {
-                // Recreate the connection
-                auto newConn = std::make_shared<DatabaseConnector>(encryptedConfigPath_, key_, IV);
-                if (newConn->GetConnectedFlag())
-                    newConn->ConnectToDatabase();
+            if (!conn || !conn->IsHealthy()) {
+                std::cerr << "Unhealthy connection detected. Replacing it..." << std::endl;
 
-                updatedQueue.push(newConn);
+                auto newConn = createNewConnection();
+                if (newConn && newConn->GetConnectedFlag()) {
+                    updatedQueue.push(newConn);
+
+                    // Also update the main connection vector
+                    auto it = std::find(connections_.begin(), connections_.end(), conn);
+                    if (it != connections_.end()) {
+                        *it = newConn;
+                    }
+                }
+                else {
+                    std::cerr << "Failed to create replacement connection during health check." << std::endl;
+                    // Don't push the bad one back in — let RefillPoolIfNeeded handle adding a new one later
+                }
             }
-            else
-            {
+            else {
                 updatedQueue.push(conn);
             }
         }
 
-        // Replace the old queue with the updated one
         std::swap(freeConnections_, updatedQueue);
     }
 }
@@ -92,7 +144,7 @@ void DatabaseConnectionPool::RefillPoolIfNeeded()
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // Remove invalid connections from both queues and vector
+    // Remove invalid connections from vector and free queue
     connections_.erase(
         std::remove_if(connections_.begin(), connections_.end(),
             [this](const std::shared_ptr<DatabaseConnector>& conn) {
@@ -112,23 +164,33 @@ void DatabaseConnectionPool::RefillPoolIfNeeded()
     }
     std::swap(freeConnections_, newQueue);
 
-    // Refill to maintain poolSize
+    // Refill pool to maintain poolSize
     while (connections_.size() < poolSize) {
-        auto newConn = std::make_shared<DatabaseConnector>(encryptedConfigPath_, key_, IV);
-        newConn->ConnectToDatabase();
-
-        if (newConn->GetConnectedFlag()) {
+        auto newConn = createNewConnection();
+        if (newConn && newConn->GetConnectedFlag()) {
             connections_.push_back(newConn);
             freeConnections_.push(newConn);
         }
         else {
-            // Optional: log the failed connection attempt
-            break; // prevent infinite loop if DB is down
+            break; // what if db is down?
         }
     }
-
-    // Notify waiting threads that a connection might now be available
     condition_.notify_all();
 }
 
-
+auto DatabaseConnectionPool::createNewConnection() -> std::shared_ptr<DatabaseConnector> {
+    try {
+        mysqlx::SessionSettings settings(
+            address, 33060,
+            username,
+            password,
+            sslCa.empty() ? nullptr : sslCa.c_str()
+        );
+        auto session = std::make_shared<mysqlx::Session>(settings);
+        return std::make_shared<DatabaseConnector>(session);
+    }
+    catch (const mysqlx::Error& err) {
+        std::cerr << "Failed to create MySQL session: " << err.what() << std::endl;
+        return nullptr;
+    }
+}

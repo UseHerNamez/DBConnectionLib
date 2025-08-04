@@ -25,10 +25,15 @@ private:
     void HealthCheckLoop();
     bool IsConnectionValid(const std::shared_ptr<DatabaseConnector>& conn);
     void RefillPoolIfNeeded();
+    auto createNewConnection()->std::shared_ptr<DatabaseConnector>;
 
     const size_t poolSize = 10;
     std::string encryptedConfigPath_;
     std::string key_;
+    std::string address;
+    std::string username;
+    std::string password;
+    std::string sslCa;
 
     std::vector<std::shared_ptr<DatabaseConnector>> connections_;
     std::queue<std::shared_ptr<DatabaseConnector>> freeConnections_;

@@ -13,9 +13,8 @@
 #include <fstream>
 #include <string>
 #include <sstream>
-#include <resultset.h>
 #include <optional>
-#include <prepared_statement.h>
+#include <algorithm>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
