@@ -13,8 +13,7 @@ DatabaseConnectionPool::DatabaseConnectionPool(
         throw std::runtime_error("Failed to open encrypted configuration file.");
     }
 
-    std::string encryptedCredentials((std::istreambuf_iterator<char>(encryptedConfigFile)),
-        std::istreambuf_iterator<char>());
+    std::string encryptedCredentials((std::istreambuf_iterator<char>(encryptedConfigFile)), std::istreambuf_iterator<char>());
     encryptedConfigFile.close();
 
     std::string decryptedCredentials = decrypt(encryptedCredentials, key_);
@@ -76,62 +75,111 @@ DatabaseConnectionPool::~DatabaseConnectionPool() {
     }
 }
 
-std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire()
+std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire(std::chrono::milliseconds timeout)
 {
-    std::unique_lock<std::mutex> lock(mutex_);
-    condition_.wait(lock, [this]() { return !freeConnections_.empty(); });
+    using clock = std::chrono::steady_clock;
 
-    auto conn = freeConnections_.front();
+    std::unique_lock<std::mutex> lock(mutex_);
+    const auto deadline = clock::now() + timeout;
+
+    while (freeConnections_.empty() && !stopHealthCheck_) {
+        if (condition_.wait_until(lock, deadline) == std::cv_status::timeout) {
+            return nullptr; // caller can respond with temporary DB unavailable
+        }
+    }
+    if (stopHealthCheck_) return nullptr;
+
+    // Take ownership of one connection
+    auto conn = std::move(freeConnections_.front());
     freeConnections_.pop();
 
+    // Return a shared_ptr that holds the original 'conn' in its deleter capture.
+    // When caller releases it, we push the same owning shared_ptr back into the queue.
     return std::shared_ptr<DatabaseConnector>(
         conn.get(),
-        [this](DatabaseConnector* ptr) {
-            std::unique_lock<std::mutex> lock(mutex_);
-            freeConnections_.push(std::shared_ptr<DatabaseConnector>(ptr, [](DatabaseConnector*) {}));
-            condition_.notify_one();
+        [this, conn = std::move(conn)](DatabaseConnector* /*ptr*/) mutable {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!stopHealthCheck_) {
+            freeConnections_.push(std::move(const_cast<std::shared_ptr<DatabaseConnector>&>(conn)));
         }
+        condition_.notify_one();
+    }
     );
+}
+
+// pick a sensible default
+std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire()
+{
+    return Acquire(std::chrono::milliseconds{1000});
 }
 
 void DatabaseConnectionPool::HealthCheckLoop()
 {
+    using namespace std::chrono;
+
     while (!stopHealthCheck_) {
-        std::this_thread::sleep_for(std::chrono::minutes(15));
-        std::lock_guard<std::mutex> lock(mutex_);
+        // Sleep in small chunks so stopHealthCheck_ can end promptly
+        for (int i = 0; i < 15 * 60 && !stopHealthCheck_; ++i) { // 15 minutes
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        if (stopHealthCheck_) break;
 
-        std::queue<std::shared_ptr<DatabaseConnector>> updatedQueue;
-
-        while (!freeConnections_.empty()) {
-            auto conn = freeConnections_.front();
-            freeConnections_.pop();
-
-            if (!conn || !conn->IsHealthy()) {
-                std::cerr << "Unhealthy connection detected. Replacing it..." << std::endl;
-
-                auto newConn = createNewConnection();
-                if (newConn && newConn->GetConnectedFlag()) {
-                    updatedQueue.push(newConn);
-
-                    // Also update the main connection vector
-                    auto it = std::find(connections_.begin(), connections_.end(), conn);
-                    if (it != connections_.end()) {
-                        *it = newConn;
-                    }
-                }
-                else {
-                    std::cerr << "Failed to create replacement connection during health check." << std::endl;
-                    // Don't push the bad one back in — let RefillPoolIfNeeded handle adding a new one later
-                }
-            }
-            else {
-                updatedQueue.push(conn);
+        // 1) Take a snapshot of free connections
+        std::vector<std::shared_ptr<DatabaseConnector>> batch;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            while (!freeConnections_.empty()) {
+                batch.push_back(std::move(freeConnections_.front()));
+                freeConnections_.pop();
             }
         }
 
-        std::swap(freeConnections_, updatedQueue);
+        // 2) Check and replace outside the lock
+        std::vector<std::shared_ptr<DatabaseConnector>> back;
+        back.reserve(batch.size());
+        const bool canCreateNow = std::chrono::steady_clock::now() >= nextRefillAttempt_;
+
+        for (auto& con : batch) {
+            if (con && con->IsHealthy()) {
+                back.push_back(std::move(con));
+                continue;
+            }
+
+            std::shared_ptr<DatabaseConnector> replacement;
+            if (canCreateNow) {
+                replacement = createNewConnection();
+            }
+
+            if (replacement && replacement->GetConnectedFlag()) {
+                back.push_back(std::move(replacement));
+                // success clears backoff
+                std::lock_guard<std::mutex> lock(mutex_);
+                refillBackoffMs_ = std::chrono::milliseconds{ 0 };
+                nextRefillAttempt_ = std::chrono::steady_clock::now();
+            }
+            else {
+                // do not put the unhealthy connection back into freeConnections_ - RefillPoolIfNeeded will top us up with backoff
+                if (canCreateNow) {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    refillBackoffMs_ = NextBackoff(refillBackoffMs_);
+                    nextRefillAttempt_ = std::chrono::steady_clock::now() + refillBackoffMs_;
+                }
+            }
+        }
+
+        // 3) Return the checked connections and try to refill
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto& c : back) {
+                freeConnections_.push(std::move(c));
+            }
+            condition_.notify_all();
+        }
+
+        RefillPoolIfNeeded(); // uses the same backoff state
     }
 }
+
 
 bool DatabaseConnectionPool::IsConnectionValid(const std::shared_ptr<DatabaseConnector>& conn)
 {
@@ -142,40 +190,78 @@ bool DatabaseConnectionPool::IsConnectionValid(const std::shared_ptr<DatabaseCon
 
 void DatabaseConnectionPool::RefillPoolIfNeeded()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    using namespace std::chrono;
 
-    // Remove invalid connections from vector and free queue
-    connections_.erase(
-        std::remove_if(connections_.begin(), connections_.end(),
-            [this](const std::shared_ptr<DatabaseConnector>& conn) {
-                return !IsConnectionValid(conn);
-            }),
-        connections_.end()
-                );
+    // Step 1 - prune invalid, but do it quickly under the lock
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    std::queue<std::shared_ptr<DatabaseConnector>> newQueue;
-    while (!freeConnections_.empty()) {
-        auto conn = freeConnections_.front();
-        freeConnections_.pop();
+        // Remove invalid entries from connections_
+        connections_.erase(
+            std::remove_if(connections_.begin(), connections_.end(),
+                [this](const std::shared_ptr<DatabaseConnector>& c) {
+                    return !IsConnectionValid(c);
+                }),
+            connections_.end()
+                    );
 
-        if (IsConnectionValid(conn)) {
-            newQueue.push(conn);
+        // Filter freeConnections_ to valid only
+        std::queue<std::shared_ptr<DatabaseConnector>> filtered;
+        while (!freeConnections_.empty()) {
+            auto c = freeConnections_.front();
+            freeConnections_.pop();
+            if (IsConnectionValid(c)) {
+                filtered.push(std::move(c));
+            }
+        }
+        std::swap(freeConnections_, filtered);
+
+        // If we are still within a backoff window, do nothing now
+        if (steady_clock::now() < nextRefillAttempt_) {
+            return;
         }
     }
-    std::swap(freeConnections_, newQueue);
 
-    // Refill pool to maintain poolSize
-    while (connections_.size() < poolSize) {
-        auto newConn = createNewConnection();
-        if (newConn && newConn->GetConnectedFlag()) {
-            connections_.push_back(newConn);
-            freeConnections_.push(newConn);
+    // Step 2 - figure how many we need, and try to create them outside the lock
+    size_t need = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (connections_.size() >= poolSize) return;
+        need = poolSize - connections_.size();
+    }
+
+    std::vector<std::shared_ptr<DatabaseConnector>> made;
+    made.reserve(need);
+
+    for (size_t i = 0; i < need; ++i) {
+        auto conn = createNewConnection();
+        if (!conn || !conn->GetConnectedFlag()) {
+            // failed - backoff and stop trying more right now
+            break;
+        }
+        made.push_back(std::move(conn));
+    }
+
+    // Step 3 - commit results under the lock and adjust backoff
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (!made.empty()) {
+            for (auto& c : made) {
+                connections_.push_back(c);
+                freeConnections_.push(std::move(c));
+            }
+            // success - clear backoff
+            refillBackoffMs_ = std::chrono::milliseconds{ 0 };
+            nextRefillAttempt_ = std::chrono::steady_clock::now(); // ready immediately
+            condition_.notify_all();
         }
         else {
-            break; // what if db is down?
+            // all attempts failed - schedule next try with backoff
+            refillBackoffMs_ = NextBackoff(refillBackoffMs_);
+            nextRefillAttempt_ = std::chrono::steady_clock::now() + refillBackoffMs_;
         }
     }
-    condition_.notify_all();
 }
 
 auto DatabaseConnectionPool::createNewConnection() -> std::shared_ptr<DatabaseConnector> {
@@ -194,3 +280,20 @@ auto DatabaseConnectionPool::createNewConnection() -> std::shared_ptr<DatabaseCo
         return nullptr;
     }
 }
+
+std::chrono::milliseconds DatabaseConnectionPool::NextBackoff(std::chrono::milliseconds current) {
+    using namespace std::chrono;
+    constexpr milliseconds kStart{ 500 };   // first wait 0.5s
+    constexpr milliseconds kMax{ 30000 };   // cap at 30s
+    if (current.count() == 0) current = kStart; else current = current * 2;
+    if (current > kMax) current = kMax;
+
+    // tiny jitter 0-250ms to avoid sync storms across instances
+    unsigned seed = static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count());
+    seed ^= static_cast<unsigned>(reinterpret_cast<uintptr_t>(&current));
+    std::minstd_rand rng(seed);
+    std::uniform_int_distribution<int> d(0, 250);
+    current += milliseconds{ d(rng) };
+    return current;
+}
+

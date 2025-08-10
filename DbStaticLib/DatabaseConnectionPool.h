@@ -10,6 +10,7 @@
 #include <chrono>
 #include <thread>
 #include "DatabaseConnector.h"
+#include "EncryptionUtils.h"
 
 class DatabaseConnectionPool {
 public:
@@ -20,12 +21,14 @@ public:
     ~DatabaseConnectionPool();
 
     std::shared_ptr<DatabaseConnector> Acquire();
+    std::shared_ptr<DatabaseConnector> Acquire(std::chrono::milliseconds timeout);
 
 private:
     void HealthCheckLoop();
     bool IsConnectionValid(const std::shared_ptr<DatabaseConnector>& conn);
     void RefillPoolIfNeeded();
     auto createNewConnection()->std::shared_ptr<DatabaseConnector>;
+    static std::chrono::milliseconds NextBackoff(std::chrono::milliseconds current);
 
     const size_t poolSize = 10;
     std::string encryptedConfigPath_;
@@ -43,5 +46,11 @@ private:
 
     std::thread healthCheckThread_;
     std::atomic<bool> stopHealthCheck_;
+
+    // Backoff state
+    std::chrono::steady_clock::time_point nextRefillAttempt_{ std::chrono::steady_clock::now() };
+    std::chrono::milliseconds refillBackoffMs_{ 0 };
+
+
 };
 

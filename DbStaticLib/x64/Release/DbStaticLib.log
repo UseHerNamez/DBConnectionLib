@@ -1,15 +1,3 @@
 ﻿  DatabaseConnectionPool.cpp
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\base.h(96,24): warning C4244: 'return': conversion from '__int64' to 'uint32_t', possible loss of data
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2180,85): warning C4244: 'argument': conversion from 'double' to '__time64_t', possible loss of data
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2178): message : while compiling class template member function 'jwt::date jwt::basic_claim<jwt::traits::kazuho_picojson>::as_date(void) const'
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2394): message : see reference to function template instantiation 'jwt::date jwt::basic_claim<jwt::traits::kazuho_picojson>::as_date(void) const' being compiled
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(3207): message : see reference to class template instantiation 'jwt::basic_claim<jwt::traits::kazuho_picojson>' being compiled
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\traits\kazuho-picojson\defaults.h(19): message : see reference to class template instantiation 'jwt::verifier<jwt::default_clock,jwt::traits::kazuho_picojson>' being compiled
   DatabaseConnector.cpp
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\base.h(96,24): warning C4244: 'return': conversion from '__int64' to 'uint32_t', possible loss of data
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2180,85): warning C4244: 'argument': conversion from 'double' to '__time64_t', possible loss of data
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2178): message : while compiling class template member function 'jwt::date jwt::basic_claim<jwt::traits::kazuho_picojson>::as_date(void) const'
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(2394): message : see reference to function template instantiation 'jwt::date jwt::basic_claim<jwt::traits::kazuho_picojson>::as_date(void) const' being compiled
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\jwt.h(3207): message : see reference to class template instantiation 'jwt::basic_claim<jwt::traits::kazuho_picojson>' being compiled
-C:\Users\Sagi\vcpkg\installed\x64-windows\include\jwt-cpp\traits\kazuho-picojson\defaults.h(19): message : see reference to class template instantiation 'jwt::verifier<jwt::default_clock,jwt::traits::kazuho_picojson>' being compiled
   DbStaticLib.vcxproj -> C:\Users\Sagi\source\repos\DbStaticLib\x64\Release\DbStaticLib.lib

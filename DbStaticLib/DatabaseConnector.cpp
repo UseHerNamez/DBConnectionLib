@@ -1,134 +1,134 @@
 // DatabaseConnector.cpp
 #include "pch.h"
+
+// kill problematic macros coming from whatever pch.h pulled in
+#include "MysqlxSanitize.h"
+
+#include <mysqlx/xdevapi.h> // include MySQL AFTER cleaning macros. If not, it brought up some weird string and value errors from common.h file of vcpkg
+
 #include "DatabaseConnector.h"
+#include "EncryptionUtils.h"
 #include <algorithm>
 
+// aliases...
+using MysqlxSession = mysqlx::abi2::r0::Session;
+using MysqlxError = mysqlx::abi2::r0::Error;
+using MysqlxSchema = mysqlx::abi2::r0::Schema;
+using MysqlxTable = mysqlx::abi2::r0::Table;
+using MysqlxRow = mysqlx::abi2::r0::Row;
+using MysqlxRowResult = mysqlx::abi2::r0::RowResult;
+namespace {
+    constexpr const char* kSchema = "accounts_db";
+    constexpr const char* kUsersTable = "user_table";
+    constexpr const char* kCharactersTable = "characters_table";
+    constexpr const char* kMapsTable = "maps";
+}
 
-DatabaseConnector::DatabaseConnector(std::shared_ptr<mysqlx::Session> i_session) : session(std::move(i_session)), connectedFlag(true)
+DatabaseConnector::DatabaseConnector(std::shared_ptr<MysqlxSession> i_session)
+    : session(std::move(i_session)), connectedFlag(true)
 {
-    if (!this->session) {
-        std::cerr << "Warning: DatabaseConnector initialized with null session." << std::endl;
+    if (!session) {
+        std::cerr << "Warning: DatabaseConnector initialized with null session.\n";
         connectedFlag = false;
     }
 }
 
-/*void DatabaseConnector::ConnectToDatabase() {
-    try {
-        session = std::make_shared<mysqlx::Session>(
-            mysqlx::SessionOption::HOST, address,
-            mysqlx::SessionOption::PORT, 33060,
-            mysqlx::SessionOption::USER, username,
-            mysqlx::SessionOption::PWD, password,
-            mysqlx::SessionOption::SSL_CA, sslCa
-            );
-        connectedFlag = true;
-    }
-    catch (const mysqlx::Error& e) {
-        std::cerr << "MySQL X Error: " << e.what() << std::endl;
-        connectedFlag = false;
-    }
-}*/
-
-DatabaseConnector::~DatabaseConnector() {
-    // shared_ptr session will automatically clean up
-    // explicitly closes the session:
+DatabaseConnector::~DatabaseConnector()
+{
+    // shared_ptr will clean up - call close() explicitly just to be tidy
     if (session) {
         try {
             session->close();
         }
-        catch (const mysqlx::Error& e) {
-            std::cerr << "Error closing MySQL X session: " << e.what() << std::endl;
+        catch (const MysqlxError& e) {
+            std::cerr << "Error closing MySQL X session: " << e.what() << '\n';
         }
     }
 }
 
-bool DatabaseConnector::IsHealthy() const {
+bool DatabaseConnector::IsHealthy() const
+{
     try {
-        if (!session) {
-            return false; // No session => not healthy
-        }
+        if (!session) return false;
 
-        // Run a simple query to check connection health
-        // In MySQL X DevAPI, use session->sql() to execute raw SQL
+        // Simple ping - will throw on failure
         session->sql("SELECT 1").execute();
-
-        return true; // If no exception, connection is healthy
+        return true;
     }
-    catch (const mysqlx::Error& e) {
-        std::cerr << "IsHealthy failed: " << e.what() << std::endl;
+    catch (const MysqlxError& e) {
+        std::cerr << "IsHealthy failed: " << e.what() << '\n';
         return false;
     }
 }
 
-bool DatabaseConnector::DoesUsernameExist(const std::string& username) {
+bool DatabaseConnector::DoesUsernameExist(const std::string& username)
+{
     try {
-        // Make sure session is valid
         if (!session) {
-            std::cerr << "Session is not initialized." << std::endl;
+            std::cerr << "Session is not initialized.\n";
             return false;
         }
 
-        // Get schema, replace "your_database_name" with actual database name
-        mysqlx::Schema db = session->getSchema("accounts_db");
+        // TODO: consider making schema name configurable instead of hardcoded
+        MysqlxSchema db = session->getSchema("accounts_db");
+        MysqlxTable userTable = db.getTable("user_table");
 
-        // Get the table
-        mysqlx::Table userTable = db.getTable("user_table");
-
-        // Run the query with a where clause
-        mysqlx::RowResult result = userTable
+        MysqlxRowResult result = userTable
             .select("COUNT(*) AS user_count")
             .where("username = :username")
             .bind("username", username)
             .execute();
 
-        // Check the result
+        // Some drivers buffer rows lazily - fetchOne() is safest
         if (result.count() > 0) {
-            mysqlx::Row row = result.fetchOne();
-            int userCount = row[0];  // or row["user_count"]
-            return (userCount > 0);
+            if (auto row = result.fetchOne(); !row.isNull())
+            {
+                // prefer explicit get to avoid narrowing
+                std::int64_t cnt = row[0].get<std::int64_t>();
+                return cnt > 0;
+            }
         }
     }
-    catch (const mysqlx::Error& err) {
-        std::cerr << "MySQL X Error: " << err.what() << std::endl;
+    catch (const MysqlxError& e) {
+        std::cerr << "MySQL X Error: " << e.what() << '\n';
     }
     catch (const std::exception& ex) {
-        std::cerr << "Standard Exception: " << ex.what() << std::endl;
+        std::cerr << "Standard Exception: " << ex.what() << '\n';
     }
     return false;
 }
 
-bool DatabaseConnector::DoPasswordsMatch(const std::string& username, const std::string& hashedPassword,
-    std::string& token, int& userId)
+bool DatabaseConnector::DoPasswordsMatch(const std::string& username, const std::string& hashedPassword, std::string& token, int& userId)
 {
     try {
         if (!session) {
-            std::cerr << "Session is not initialized." << std::endl;
+            std::cerr << "Session is not initialized.\n";
             userId = -1;
             return false;
         }
 
-        // Get the schema and table (replace "your_database_name" accordingly)
-        mysqlx::Schema db = session->getSchema("your_database_name");
-        mysqlx::Table userTable = db.getTable("user_table");
+        // TODO: replace with your actual schema name
+        MysqlxSchema db = session->getSchema("accounts_db");
+        MysqlxTable  user = db.getTable("user_table");
 
-        // Select id and password where username = :username
-        mysqlx::RowResult result = userTable
+        MysqlxRowResult result = user
             .select("id", "password")
             .where("username = :username")
             .bind("username", username)
             .execute();
 
-        mysqlx::Row row = result.fetchOne();
-        if (!row) {
-            // No such user
+        if (result.count() == 0) {
             userId = -1;
             return false;
         }
 
-        userId = row[0];  // id
-        std::string storedHashedPassword = row[1].get<std::string>();  // password
+        MysqlxRow row = result.fetchOne();
+        // be explicit about types to avoid narrowing
+        std::int64_t id64 = row[0].get<std::int64_t>();
+        std::string  storedHashedPassword = row[1].get<std::string>();
 
-        // Compare passwords
+        userId = static_cast<int>(id64);
+
         if (storedHashedPassword == hashedPassword) {
             std::unordered_map<std::string, std::string> claims = {
                 {"username", username},
@@ -138,54 +138,62 @@ bool DatabaseConnector::DoPasswordsMatch(const std::string& username, const std:
             return true;
         }
     }
-    catch (const mysqlx::Error& e) {
-        std::cerr << "MySQL X Error: " << e.what() << std::endl;
+    catch (const MysqlxError& e) {
+        std::cerr << "MySQL X Error: " << e.what() << '\n';
     }
     catch (const std::exception& ex) {
-        std::cerr << "Standard Exception: " << ex.what() << std::endl;
+        std::cerr << "Standard Exception: " << ex.what() << '\n';
     }
 
     userId = -1;
     return false;
 }
 
-bool DatabaseConnector::RegisterUser(const std::string& username, const std::string& hashedPassword, std::string& token) {
+bool DatabaseConnector::RegisterUser(const std::string& username,
+    const std::string& hashedPassword,
+    std::string& token)
+{
     try {
-        // Get schema and table from session
-        mysqlx::Schema db = session->getSchema("users"); // adjust your schema name accordingly
-        mysqlx::Table userTable = db.getTable("user_table");
+        if (!session) {
+            std::cerr << "Session is not initialized.\n";
+            return false;
+        }
 
-        // Insert the new user
-        userTable.insert("username", "password")
+        // TODO: replace with your actual schema name
+        MysqlxSchema db = session->getSchema("accounts_db");
+        MysqlxTable  user = db.getTable("user_table");
+
+        user.insert("username", "password")
             .values(username, hashedPassword)
             .execute();
 
-        // Retrieve last insert ID (MySQL X API uses "LAST_INSERT_ID()" as an expression)
-        mysqlx::RowResult res = session->sql("SELECT LAST_INSERT_ID()").execute();
-        mysqlx::Row row = res.fetchOne();
-
-        if (!row.isNull()) {
-            int userId = row[0]; // last insert ID
-
-            // Generate token as before
-            std::unordered_map<std::string, std::string> claims = {
-                {"username", username},
-                {"userId", std::to_string(userId)}
-            };
-            token = GenerateToken(claims);
-            return true;
+        // get last insert id
+        MysqlxRowResult res = session->sql("SELECT LAST_INSERT_ID()").execute();
+        if (res.count() == 0) {
+            std::cerr << "Could not fetch LAST_INSERT_ID().\n";
+            return false;
         }
+        MysqlxRow row = res.fetchOne();
+        std::int64_t id64 = row[0].get<std::int64_t>();
+        int userId = static_cast<int>(id64);
+
+        std::unordered_map<std::string, std::string> claims = {
+            {"username", username},
+            {"userId", std::to_string(userId)}
+        };
+        token = GenerateToken(claims);
+        return true;
     }
-    catch (const mysqlx::Error& err) {
-        std::cerr << "MySQL X Error: " << err.what() << std::endl;
+    catch (const MysqlxError& err) {
+        std::cerr << "MySQL X Error: " << err.what() << '\n';
     }
     catch (const std::exception& ex) {
-        std::cerr << "Standard Exception: " << ex.what() << std::endl;
+        std::cerr << "Standard Exception: " << ex.what() << '\n';
     }
     return false;
 }
 
-bool DatabaseConnector::GetConnectedFlag()
+bool DatabaseConnector::GetConnectedFlag() const
 {
     return connectedFlag;
 }
@@ -194,125 +202,114 @@ std::string DatabaseConnector::DeleteCharacter(int userId, const std::string& ch
 {
     try {
         if (!session) {
-            std::cerr << "Session is not initialized." << std::endl;
+            std::cerr << "Session is not initialized.\n";
             return "DATABASE_ERROR NO_SESSION";
         }
 
-        // Get schema and table (replace "your_database_name" with actual DB name)
-        mysqlx::Schema db = session->getSchema("your_database_name");
-        mysqlx::Table charactersTable = db.getTable("characters_table");
+        // TODO: replace with your actual schema and table names
+        MysqlxSchema db = session->getSchema("accounts_db");
+        MysqlxTable  characters = db.getTable("characters_table");
 
-        // Perform the DELETE query with matching user_id and character_name
-        uint64_t affectedRows = charactersTable
-            .remove()
+        auto cmd = characters.remove()
             .where("user_id = :user_id AND character_name = :char_name")
             .bind("user_id", userId)
             .bind("char_name", charName)
-            .execute()
-            .getAffectedItemsCount();
+            .execute();
 
-        if (affectedRows > 0) {
-            return "CHARACTER_DELETED";
-        }
-        else {
-            return "CHARACTER_NOT_FOUND";
-        }
+        std::uint64_t affected = cmd.getAffectedItemsCount();
+        return affected > 0 ? "CHARACTER_DELETED" : "CHARACTER_NOT_FOUND";
     }
-    catch (const mysqlx::Error& e) {
-        std::cerr << "MySQL X Error while deleting character: " << e.what() << std::endl;
+    catch (const MysqlxError& e) {
+        std::cerr << "MySQL X Error while deleting character: " << e.what() << '\n';
         return "DATABASE_ERROR SQL_e";
     }
 }
 
 std::string DatabaseConnector::GetCharactersInfoByUserId(int userId) // only for login pages
 {
-    std::string charactersInfo;
-
     try {
         if (!session) {
-            std::cerr << "Session is not initialized." << std::endl;
+            std::cerr << "Session is not initialized.\n";
             return "db_err";
         }
 
-        mysqlx::Schema db = session->getSchema("your_database_name");
-        mysqlx::Table charactersTable = db.getTable("characters_table");
+        MysqlxSchema db = session->getSchema(kSchema);
+        MysqlxTable  characters = db.getTable(kCharactersTable);
 
-        mysqlx::RowResult result = charactersTable
+        MysqlxRowResult result = characters
             .select("character_name", "level", "gender", "appearance")
             .where("user_id = :user_id")
             .bind("user_id", userId)
             .execute();
 
-        for (mysqlx::Row row : result) {
-            std::string characterName = row[0].get<std::string>();
-            std::string level = row[1].get<std::string>();
-            std::string gender = row[2].get<std::string>();
-            std::string appearance = row[3].get<std::string>();
+        std::string out;
+        // optional micro-optimization
+        if (auto n = result.count(); n > 0) out.reserve(static_cast<size_t>(n) * 32);
 
-            charactersInfo += characterName + "|" + level + "|" + gender + "|" + appearance + "|";
+        for (auto row : result) {
+            const std::string characterName = row[0].get<std::string>();
+            const std::string level = row[1].get<std::string>();   // or to_string(row[1].get<int64_t>())
+            const std::string gender = row[2].get<std::string>();
+            const std::string appearance = row[3].get<std::string>();
+
+            out += characterName; out += "|";
+            out += level;         out += "|";
+            out += gender;        out += "|";
+            out += appearance;    out += "|";
         }
+
+        if (out.empty()) return "EMPTY";
+        return out;
     }
-    catch (const mysqlx::Error& e) {
-        std::cerr << "Database error: " << e.what() << std::endl;
+    catch (const MysqlxError& e) {
+        std::cerr << "Database error: " << e.what() << '\n';
         return "db_err";
     }
     catch (const std::exception& ex) {
-        std::cerr << "Standard exception: " << ex.what() << std::endl;
+        std::cerr << "Standard exception: " << ex.what() << '\n';
         return "db_err";
     }
-
-    if (charactersInfo.empty()) {
-        charactersInfo = "EMPTY";
-    }
-
-    return charactersInfo;
 }
 
 std::string DatabaseConnector::DoesCharacterNameExist(const std::string& charName)
 {
-    std::string o_returnMsg;
-
     try {
         if (!session) {
-            std::cerr << "Session is not initialized." << std::endl;
+            std::cerr << "Session is not initialized.\n";
             return "Database error: no session";
         }
 
-        mysqlx::Schema db = session->getSchema("your_database_name");
-        mysqlx::Table charactersTable = db.getTable("characters_table");
+        MysqlxSchema db = session->getSchema(kSchema);
+        MysqlxTable  characters = db.getTable(kCharactersTable);
 
-        mysqlx::RowResult result = charactersTable
+        MysqlxRowResult result = characters
             .select("COUNT(*)")
             .where("character_name = :charName")
             .bind("charName", charName)
             .execute();
 
-        mysqlx::Row row = result.fetchOne();
-        if (!row) {
+        MysqlxRow row = result.fetchOne();
+        if (row.isNull()) {
             return "available"; // no rows means no such character
         }
 
-        bool exists = row[0].get<int>() > 0;
-        o_returnMsg = exists ? "exists" : "available";
+        const std::int64_t cnt = row[0].get<std::int64_t>();
+        return cnt > 0 ? "exists" : "available";
     }
-    catch (const mysqlx::Error& e) {
-        std::cerr << "SQLException in DatabaseConnector::DoesCharacterNameExist: " << e.what() << std::endl;
+    catch (const MysqlxError& e) {
+        std::cerr << "SQLException in DatabaseConnector::DoesCharacterNameExist: " << e.what() << '\n';
         return std::string("Database error: ") + e.what();
     }
     catch (const std::exception& ex) {
-        std::cerr << "Standard exception: " << ex.what() << std::endl;
+        std::cerr << "Standard exception: " << ex.what() << '\n';
         return std::string("Database error: ") + ex.what();
     }
-
-    return o_returnMsg;
 }
 
-std::string DatabaseConnector::AddCosmeticCharDataToDB(const int userId, const std::string& charData) {
+std::string DatabaseConnector::AddCosmeticCharDataToDB(const int userId, const std::string& charData)
+{
     std::string characterName, levelStr, genderStr, appearance;
-    int level, gender;
-
     try {
-        // Parse the input string
         std::istringstream ss(charData);
         if (!std::getline(ss, characterName, '|') ||
             !std::getline(ss, levelStr, '|') ||
@@ -322,23 +319,18 @@ std::string DatabaseConnector::AddCosmeticCharDataToDB(const int userId, const s
             return "Error: Invalid input format.";
         }
 
-        if (genderStr == "true") gender = 1;
-        else if (genderStr == "false") gender = 0;
-        else gender = std::stoi(genderStr);  // fallback if numeric string
-
-        level = std::stoi(levelStr);
+        int gender = (genderStr == "true") ? 1 : (genderStr == "false" ? 0 : std::stoi(genderStr));
+        int level = std::stoi(levelStr);
 
         if (!session) {
-            std::cerr << "Session is not initialized." << std::endl;
+            std::cerr << "Session is not initialized.\n";
             return "Database error: no session";
         }
 
-        mysqlx::Schema db = session->getSchema("your_database_name");
-        mysqlx::Table charactersTable = db.getTable("characters_table");
+        MysqlxSchema db = session->getSchema(kSchema);
+        MysqlxTable  characters = db.getTable(kCharactersTable);
 
-        // Insert the record
-        charactersTable
-            .insert("user_id", "character_name", "level", "gender", "appearance")
+        characters.insert("user_id", "character_name", "level", "gender", "appearance")
             .values(userId, characterName, level, gender, appearance)
             .execute();
 
@@ -347,7 +339,7 @@ std::string DatabaseConnector::AddCosmeticCharDataToDB(const int userId, const s
     catch (const std::invalid_argument& e) {
         return std::string("Error: Invalid level or gender value - ") + e.what();
     }
-    catch (const mysqlx::Error& e) {
+    catch (const MysqlxError& e) {
         return std::string("SQLException: ") + e.what();
     }
     catch (const std::exception& e) {
@@ -355,49 +347,41 @@ std::string DatabaseConnector::AddCosmeticCharDataToDB(const int userId, const s
     }
 }
 
-std::optional<std::tuple<int, std::string, std::string>> DatabaseConnector::getCharIdAndMap(int userId, const std::string& charName)
+std::optional<std::tuple<int, std::string, std::string>>
+DatabaseConnector::getCharIdAndMap(int userId, const std::string& charName)
 {
     try {
         if (!session) {
-            std::cerr << "Session is not initialized." << std::endl;
+            std::cerr << "Session is not initialized.\n";
             return std::nullopt;
         }
 
-        mysqlx::Schema db = session->getSchema("your_database_name");
-
-        // Use the table objects for the two tables
-        mysqlx::Table charactersTable = db.getTable("characters_table");
-        mysqlx::Table mapsTable = db.getTable("maps");
-
-        std::string query =
+        // Raw SQL is fine here since we JOIN across tables
+        const std::string query =
             "SELECT c.id, c.current_map, m.gameplay_server_address "
             "FROM characters_table c "
             "LEFT JOIN maps m ON c.current_map = m.name "
             "WHERE c.user_id = ? AND c.character_name = ?";
 
-        mysqlx::SqlStatement stmt = session->sql(query);
+        auto stmt = session->sql(query);
         stmt.bind(userId, charName);
+        auto result = stmt.execute();
+        MysqlxRow row = result.fetchOne();
 
-        mysqlx::SqlResult result = stmt.execute();
-        mysqlx::Row row = result.fetchOne();
-
-        if (row) {
-            int charId = row[0].get<int>();
-            std::string mapName = row[1].get<std::string>();
-            std::string mapAddress = row[2].isNull() ? "" : row[2].get<std::string>();
-
-            return std::make_tuple(charId, mapName, mapAddress);
+        if (!row.isNull()) {
+            int         charId = static_cast<int>(row[0].get<std::int64_t>());
+            std::string mapName = row[1].isNull() ? std::string() : row[1].get<std::string>();
+            std::string mapAddress = row[2].isNull() ? std::string() : row[2].get<std::string>();
+            return std::make_tuple(charId, std::move(mapName), std::move(mapAddress));
         }
-        else {
-            return std::nullopt;
-        }
+        return std::nullopt;
     }
-    catch (const mysqlx::Error& e) {
-        std::cerr << "MySQL X Error in getCharIdAndMap: " << e.what() << std::endl;
+    catch (const MysqlxError& e) {
+        std::cerr << "MySQL X Error in getCharIdAndMap: " << e.what() << '\n';
         return std::nullopt;
     }
     catch (const std::exception& e) {
-        std::cerr << "Standard Exception in getCharIdAndMap: " << e.what() << std::endl;
+        std::cerr << "Standard Exception in getCharIdAndMap: " << e.what() << '\n';
         return std::nullopt;
     }
 }
