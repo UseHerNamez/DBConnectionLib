@@ -385,3 +385,68 @@ DatabaseConnector::getCharIdAndMap(int userId, const std::string& charName)
         return std::nullopt;
     }
 }
+
+std::optional<std::tuple<std::string, std::string, int, std::string,  // name, level, gender, appearance
+    int, int, int, int, int, int>>                       // str,dex,wis,luk,pur,vic
+     DatabaseConnector::GetCharGameplayDataById(int charId)
+{
+    {
+        lastError_.clear();
+        try
+        {
+            std::string query =
+                "SELECT c.character_name, c.level, c.gender, c.appearance, "
+                "       s.str_stat, s.dex_stat, s.wis_stat, s.luk_stat, s.pur_stat, s.vic_stat "
+                "FROM characters_table AS c "
+                "LEFT JOIN character_base_stats AS s ON s.character_id = c.id "
+                "WHERE c.id = :id";
+
+            mysqlx::SqlResult res = session->sql(query)
+                .bind("id", charId)
+                .execute();
+
+            if (auto row = res.fetchOne())
+            {
+                std::string name = row[0].get<std::string>();
+                std::string level = row[1].get<std::string>();
+                int         gender = row[2].isNull() ? -1 : row[2].get<int>();
+                std::string appearance = row[3].get<std::string>();
+
+                int str_stat = row[4].isNull() ? 0 : row[4].get<int>();
+                int dex_stat = row[5].isNull() ? 0 : row[5].get<int>();
+                int wis_stat = row[6].isNull() ? 0 : row[6].get<int>();
+                int luk_stat = row[7].isNull() ? 0 : row[7].get<int>();
+                int pur_stat = row[8].isNull() ? 0 : row[8].get<int>();
+                int vic_stat = row[9].isNull() ? 0 : row[9].get<int>();
+
+                return std::make_tuple(
+                    name, level, gender, appearance,
+                    str_stat, dex_stat, wis_stat, luk_stat, pur_stat, vic_stat
+                );
+            }
+
+            // not found is not an error - just return nullopt
+            return std::nullopt;
+        }
+        catch (const MysqlxError& err)
+        {
+            lastError_ = std::string("MySQL error: ") + err.what();
+        }
+        catch (const std::exception& ex)
+        {
+            lastError_ = std::string("STD exception: ") + ex.what();
+        }
+        catch (...)
+        {
+            lastError_ = "Unknown exception in GetCharGameplayDataById";
+        }
+
+        return std::nullopt;
+    }
+}
+
+std::string DatabaseConnector::GetLastError() const
+{
+    return lastError_;
+}
+

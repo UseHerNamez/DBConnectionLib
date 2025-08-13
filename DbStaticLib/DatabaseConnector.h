@@ -13,6 +13,7 @@ public:
     explicit DatabaseConnector(std::shared_ptr<mysqlx::Session> s);
     ~DatabaseConnector();
 
+    // Login related operations
     bool DoesUsernameExist(const std::string& username);
     bool DoPasswordsMatch(const std::string& username,
         const std::string& hashedPassword,
@@ -22,7 +23,7 @@ public:
         const std::string& hashedPassword,
         std::string& token);
 
-    bool GetConnectedFlag() const;
+
     std::string DeleteCharacter(int userId, const std::string& charName);
     std::string GetCharactersInfoByUserId(int userId);
     std::string DoesCharacterNameExist(const std::string& charName);
@@ -31,11 +32,19 @@ public:
     std::optional<std::tuple<int, std::string, std::string>>
         getCharIdAndMap(int userId, const std::string& charName);
 
-    bool IsHealthy() const;
+    // Gameplay maps related operations
+    std::optional<std::tuple<std::string, std::string, int, std::string,
+        int, int, int, int, int, int>>GetCharGameplayDataById(int charId);
+    std::string GetLastError() const;
 
+
+    // Connection related operations
+    bool IsHealthy() const;
+    bool GetConnectedFlag() const;
     std::shared_ptr<mysqlx::Session> GetSession() const { return session; }
 
 private:
     std::shared_ptr<mysqlx::Session> session;
     bool connectedFlag = true;
+    mutable std::string lastError_;
 };
