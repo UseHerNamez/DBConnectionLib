@@ -4,8 +4,8 @@
 
 DatabaseConnectionPool::DatabaseConnectionPool(
     const std::string& encryptedConfigPath,
-    const std::string& key)
-    : encryptedConfigPath_(encryptedConfigPath), key_(key), stopHealthCheck_(false)
+    const std::string& key, uint32_t initialPoolSize)
+    : encryptedConfigPath_(encryptedConfigPath), key_(key), poolSize(initialPoolSize), stopHealthCheck_(false)
 {
     // 1. Read and decrypt config
     std::ifstream encryptedConfigFile(encryptedConfigPath_, std::ios::binary);
@@ -107,10 +107,9 @@ std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire(std::chrono::
     );
 }
 
-// pick a sensible default
 std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire()
 {
-    return Acquire(std::chrono::milliseconds{1000});
+    return Acquire(std::chrono::milliseconds{ timeToWaitForAFreeConn });
 }
 
 void DatabaseConnectionPool::HealthCheckLoop()
@@ -179,7 +178,6 @@ void DatabaseConnectionPool::HealthCheckLoop()
         RefillPoolIfNeeded(); // uses the same backoff state
     }
 }
-
 
 bool DatabaseConnectionPool::IsConnectionValid(const std::shared_ptr<DatabaseConnector>& conn)
 {
@@ -296,4 +294,3 @@ std::chrono::milliseconds DatabaseConnectionPool::NextBackoff(std::chrono::milli
     current += milliseconds{ d(rng) };
     return current;
 }
-

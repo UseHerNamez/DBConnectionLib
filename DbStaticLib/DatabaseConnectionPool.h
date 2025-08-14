@@ -16,7 +16,8 @@ class DatabaseConnectionPool {
 public:
 
     DatabaseConnectionPool(const std::string& encryptedConfigPath,
-        const std::string& key);
+        const std::string& key,
+        uint32_t initialPoolSize = 10); // ctor which will accept desired poolsize
 
     ~DatabaseConnectionPool();
 
@@ -30,7 +31,8 @@ private:
     auto createNewConnection()->std::shared_ptr<DatabaseConnector>;
     static std::chrono::milliseconds NextBackoff(std::chrono::milliseconds current);
 
-    const size_t poolSize = 10;
+    uint32_t poolSize = 10;
+    const int timeToWaitForAFreeConn = 5000;
     std::string encryptedConfigPath_;
     std::string key_;
     std::string address;
