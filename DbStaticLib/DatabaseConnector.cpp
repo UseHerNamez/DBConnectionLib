@@ -396,7 +396,7 @@ std::optional<std::tuple<std::string, std::string, int, std::string,  // name, l
         {
             std::string query =
                 "SELECT c.character_name, c.level, c.gender, c.appearance, "
-                "       s.str_stat, s.dex_stat, s.wis_stat, s.luk_stat, s.pur_stat, s.vic_stat "
+                "       s.str, s.dex, s.wis, s.luk, s.pur, s.vic "
                 "FROM characters_table AS c "
                 "LEFT JOIN character_base_stats AS s ON s.character_id = c.id "
                 "WHERE c.id = :id";

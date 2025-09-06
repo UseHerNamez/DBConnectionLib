@@ -17,12 +17,13 @@ public:
 
     DatabaseConnectionPool(const std::string& encryptedConfigPath,
         const std::string& key,
-        uint32_t initialPoolSize = 10); // ctor which will accept desired poolsize
+        uint32_t initialPoolSize = 10, // ctor which will accept desired poolsize
+        uint32_t numReservedWriters = 0); 
 
     ~DatabaseConnectionPool();
 
     std::shared_ptr<DatabaseConnector> Acquire();
-    std::shared_ptr<DatabaseConnector> Acquire(std::chrono::milliseconds timeout);
+    std::shared_ptr<DatabaseConnector> Acquire(std::chrono::milliseconds timeout, bool bIsWriter);
 
 private:
     void HealthCheckLoop();
@@ -31,6 +32,7 @@ private:
     auto createNewConnection()->std::shared_ptr<DatabaseConnector>;
     static std::chrono::milliseconds NextBackoff(std::chrono::milliseconds current);
 
+    uint32_t reservedWriterCount_ = 0;
     uint32_t poolSize = 10;
     const int timeToWaitForAFreeConn = 5000;
     std::string encryptedConfigPath_;

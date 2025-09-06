@@ -4,8 +4,8 @@
 
 DatabaseConnectionPool::DatabaseConnectionPool(
     const std::string& encryptedConfigPath,
-    const std::string& key, uint32_t initialPoolSize)
-    : encryptedConfigPath_(encryptedConfigPath), key_(key), poolSize(initialPoolSize), stopHealthCheck_(false)
+    const std::string& key, uint32_t initialPoolSize, uint32_t numReservedWriters)
+    : encryptedConfigPath_(encryptedConfigPath), key_(key), poolSize(initialPoolSize), stopHealthCheck_(false), reservedWriterCount_(numReservedWriters)
 {
     // 1. Read and decrypt config
     std::ifstream encryptedConfigFile(encryptedConfigPath_, std::ios::binary);
@@ -75,26 +75,41 @@ DatabaseConnectionPool::~DatabaseConnectionPool() {
     }
 }
 
-std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire(std::chrono::milliseconds timeout)
+std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire(std::chrono::milliseconds timeout, bool bIsWriter)
 {
     using clock = std::chrono::steady_clock;
 
     std::unique_lock<std::mutex> lock(mutex_);
     const auto deadline = clock::now() + timeout;
 
-    while (freeConnections_.empty() && !stopHealthCheck_) {
-        if (condition_.wait_until(lock, deadline) == std::cv_status::timeout) {
+    // Lambda to check if we can take a connection
+    auto canAcquire = [this, bIsWriter]() -> bool {
+        if (freeConnections_.empty()) return false;
+
+        if (!bIsWriter)
+        {
+            // For non-writers, ensure at least 'reservedWriterCount_' connections remain free
+            return freeConnections_.size() > reservedWriterCount_;
+        }
+        // Writers can take any free connection
+        return true;
+    };
+
+    while (!canAcquire() && !stopHealthCheck_)
+    {
+        if (condition_.wait_until(lock, deadline) == std::cv_status::timeout)
+        {
             return nullptr; // caller can respond with temporary DB unavailable
         }
     }
+
     if (stopHealthCheck_) return nullptr;
 
     // Take ownership of one connection
     auto conn = std::move(freeConnections_.front());
     freeConnections_.pop();
 
-    // Return a shared_ptr that holds the original 'conn' in its deleter capture.
-    // When caller releases it, we push the same owning shared_ptr back into the queue.
+    // Return a shared_ptr that will push it back on release
     return std::shared_ptr<DatabaseConnector>(
         conn.get(),
         [this, conn = std::move(conn)](DatabaseConnector* /*ptr*/) mutable {
@@ -107,10 +122,12 @@ std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire(std::chrono::
     );
 }
 
+// Simple default Acquire (non-writer by default)
 std::shared_ptr<DatabaseConnector> DatabaseConnectionPool::Acquire()
 {
-    return Acquire(std::chrono::milliseconds{ timeToWaitForAFreeConn });
+    return Acquire(std::chrono::milliseconds{ timeToWaitForAFreeConn }, false);
 }
+
 
 void DatabaseConnectionPool::HealthCheckLoop()
 {
