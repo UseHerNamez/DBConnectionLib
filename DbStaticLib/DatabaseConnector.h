@@ -34,7 +34,8 @@ public:
     std::optional<std::tuple<std::string, std::string, int, std::string,
         int, int, int, int, int, int>>GetCharGameplayDataById(int charId);
     std::string GetLastError() const;
-    bool UpdateCharacterStat(int CharId, const std::string& StatName, int Value);
+    // Persistent writer taskss
+    bool UpdateCharacterLevel(int CharId, int LvlToSet);
     bool UpdateCharacterStats(int CharId, const std::map<std::string, int>& Stats);
 
 

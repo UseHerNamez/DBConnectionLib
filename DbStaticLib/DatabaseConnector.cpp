@@ -412,16 +412,16 @@ std::optional<std::tuple<std::string, std::string, int, std::string,  // name, l
                 int         gender = row[2].isNull() ? -1 : row[2].get<int>();
                 std::string appearance = row[3].get<std::string>();
 
-                int str_stat = row[4].isNull() ? 0 : row[4].get<int>();
-                int dex_stat = row[5].isNull() ? 0 : row[5].get<int>();
-                int wis_stat = row[6].isNull() ? 0 : row[6].get<int>();
-                int luk_stat = row[7].isNull() ? 0 : row[7].get<int>();
-                int pur_stat = row[8].isNull() ? 0 : row[8].get<int>();
-                int vic_stat = row[9].isNull() ? 0 : row[9].get<int>();
+                int str = row[4].isNull() ? 0 : row[4].get<int>();
+                int dex = row[5].isNull() ? 0 : row[5].get<int>();
+                int wis = row[6].isNull() ? 0 : row[6].get<int>();
+                int luk = row[7].isNull() ? 0 : row[7].get<int>();
+                int pur = row[8].isNull() ? 0 : row[8].get<int>();
+                int vic = row[9].isNull() ? 0 : row[9].get<int>();
 
                 return std::make_tuple(
                     name, level, gender, appearance,
-                    str_stat, dex_stat, wis_stat, luk_stat, pur_stat, vic_stat
+                    str, dex, wis, luk, pur, vic
                 );
             }
 
@@ -450,3 +450,49 @@ std::string DatabaseConnector::GetLastError() const
     return lastError_;
 }
 
+bool DatabaseConnector::UpdateCharacterLevel(int CharId, int LvlToSet)
+{
+    if (!session) return false;
+
+    try
+    {
+        std::string sql = "UPDATE characters_table SET level = " + std::to_string(LvlToSet) +
+            " WHERE id = " + std::to_string(CharId) + ";";
+
+        session->sql(sql).execute();  // execute on session
+        return true;
+    }
+    catch (const mysqlx::Error& err)
+    {
+        lastError_ = err.what();
+        return false;
+    }
+}
+
+bool DatabaseConnector::UpdateCharacterStats(int CharId, const std::map<std::string, int>& Stats)
+{
+    if (!session || Stats.empty()) return false;
+
+    try
+    {
+        std::string sql = "UPDATE character_base_stats SET ";
+
+        bool first = true;
+        for (const auto& [statName, value] : Stats)
+        {
+            if (!first) sql += ", ";
+            sql += statName + " = " + std::to_string(value);
+            first = false;
+        }
+
+        sql += " WHERE character_id = " + std::to_string(CharId) + ";";
+
+        session->sql(sql).execute(); // <- call sql() on session, not schema
+        return true;
+    }
+    catch (const mysqlx::Error& err)
+    {
+        lastError_ = err.what();
+        return false;
+    }
+}
