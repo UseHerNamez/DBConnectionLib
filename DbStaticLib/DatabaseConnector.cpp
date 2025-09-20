@@ -478,8 +478,13 @@ bool DatabaseConnector::UpdateCharacterStats(int CharId, const std::map<std::str
         std::string sql = "UPDATE character_base_stats SET ";
 
         bool first = true;
-        for (const auto& [statName, value] : Stats)
+        for (const auto& [statNameRaw, value] : Stats)
         {
+            // Normalize column name to lowercase
+            std::string statName = statNameRaw;
+            std::transform(statName.begin(), statName.end(), statName.begin(),
+                [](unsigned char c) { return std::tolower(c); });
+
             if (!first) sql += ", ";
             sql += statName + " = " + std::to_string(value);
             first = false;
@@ -487,7 +492,7 @@ bool DatabaseConnector::UpdateCharacterStats(int CharId, const std::map<std::str
 
         sql += " WHERE character_id = " + std::to_string(CharId) + ";";
 
-        session->sql(sql).execute(); // <- call sql() on session, not schema
+        session->sql(sql).execute();
         return true;
     }
     catch (const mysqlx::Error& err)
@@ -496,3 +501,4 @@ bool DatabaseConnector::UpdateCharacterStats(int CharId, const std::map<std::str
         return false;
     }
 }
+

@@ -32,3 +32,17 @@
 *.app
 
 browse.vc.db
+
+# Visual Studio
+.vs/
+*.suo
+*.opendb
+*.db
+*.db-shm
+*.db-wal
+*.ipch
+
+# Build outputs
+[Bb]uild/
+x64/
+*.pdb
