@@ -22,6 +22,7 @@ namespace {
     constexpr const char* kUsersTable = "user_table";
     constexpr const char* kCharactersTable = "characters_table";
     constexpr const char* kMapsTable = "maps";
+    constexpr const char* kCharacterProgressionTable = "character_progression";
 }
 
 DatabaseConnector::DatabaseConnector(std::shared_ptr<MysqlxSession> i_session)
@@ -387,7 +388,10 @@ DatabaseConnector::getCharIdAndMap(int userId, const std::string& charName)
 }
 
 std::optional<std::tuple<std::string, std::string, int, std::string,  // name, level, gender, appearance
-    int, int, int, int, int, int>>                       // str,dex,wis,luk,pur,vic
+    int, int, int, int, int, int,                                    // str,dex,wis,luk,pur,vic
+    int, int, int, int,                                              // maxHpFromLvls, maxMpFromLvls, currHp, currMp
+    int, int,                                                        // maxExpToLvl, currExp
+    int, int>>                                                       // highestminrange, highestmaxrange
      DatabaseConnector::GetCharGameplayDataById(int charId)
 {
     {
@@ -396,9 +400,12 @@ std::optional<std::tuple<std::string, std::string, int, std::string,  // name, l
         {
             std::string query =
                 "SELECT c.character_name, c.level, c.gender, c.appearance, "
-                "       s.str, s.dex, s.wis, s.luk, s.pur, s.vic "
+                "       s.str, s.dex, s.wisd, s.luk, s.pur, s.vic, "
+                "       s.maxHpFromLvls, s.maxMpFromLvls, s.currHp, s.currMp, "
+                "       s.maxExpToLvl, s.currExp, "
+                "       s.HighestMinRange, s.HighestMaxRange "
                 "FROM characters_table AS c "
-                "LEFT JOIN character_base_stats AS s ON s.character_id = c.id "
+                "LEFT JOIN character_progression AS s ON s.character_id = c.id "
                 "WHERE c.id = :id";
 
             mysqlx::SqlResult res = session->sql(query)
@@ -414,14 +421,28 @@ std::optional<std::tuple<std::string, std::string, int, std::string,  // name, l
 
                 int str = row[4].isNull() ? 0 : row[4].get<int>();
                 int dex = row[5].isNull() ? 0 : row[5].get<int>();
-                int wis = row[6].isNull() ? 0 : row[6].get<int>();
+                int wisd = row[6].isNull() ? 0 : row[6].get<int>();
                 int luk = row[7].isNull() ? 0 : row[7].get<int>();
                 int pur = row[8].isNull() ? 0 : row[8].get<int>();
                 int vic = row[9].isNull() ? 0 : row[9].get<int>();
 
+                int maxHpFromLvls = row[10].isNull() ? 0 : row[10].get<int>();
+                int maxMpFromLvls = row[11].isNull() ? 0 : row[11].get<int>();
+                int currHp        = row[12].isNull() ? 0 : row[12].get<int>();
+                int currMp        = row[13].isNull() ? 0 : row[13].get<int>();
+
+                int maxExpToLvl   = row[14].isNull() ? 0 : row[14].get<int>();
+                int currExp       = row[15].isNull() ? 0 : row[15].get<int>();
+
+                int highestMin    = row[16].isNull() ? 0 : row[16].get<int>();
+                int highestMax    = row[17].isNull() ? 0 : row[17].get<int>();
+
                 return std::make_tuple(
                     name, level, gender, appearance,
-                    str, dex, wis, luk, pur, vic
+                    str, dex, wisd, luk, pur, vic,
+                    maxHpFromLvls, maxMpFromLvls, currHp, currMp,
+                    maxExpToLvl, currExp,
+                    highestMin, highestMax
                 );
             }
 
@@ -469,29 +490,144 @@ bool DatabaseConnector::UpdateCharacterLevel(int CharId, int LvlToSet)
     }
 }
 
-bool DatabaseConnector::UpdateCharacterStats(int CharId, const std::map<std::string, int>& Stats)
+bool DatabaseConnector::UpdateCharacterAchievements(int CharId, int HighestMinRange, int HighestMaxRange)
 {
-    if (!session || Stats.empty()) return false;
-
+    if (!session) return false;
     try
     {
-        std::string sql = "UPDATE character_base_stats SET ";
+        // character_progression holds HighestMinRange/HighestMaxRange columns
+        std::string sql = "UPDATE character_progression SET HighestMinRange = " + std::to_string(HighestMinRange) +
+            ", HighestMaxRange = " + std::to_string(HighestMaxRange) +
+            " WHERE character_id = " + std::to_string(CharId) + ";";
+        session->sql(sql).execute();
+        return true;
+    }
+    catch (const mysqlx::Error& err)
+    {
+        lastError_ = err.what();
+        return false;
+    }
+}
 
-        bool first = true;
-        for (const auto& [statNameRaw, value] : Stats)
+bool DatabaseConnector::UpdateCharacterUnspentAP(int CharId, int UnspentAP)
+{
+    if (!session) return false;
+    try
+    {
+        std::string sql = "UPDATE character_progression SET unUsedAp = " + std::to_string(UnspentAP) +
+            " WHERE character_id = " + std::to_string(CharId) + ";";
+        session->sql(sql).execute();
+        return true;
+    }
+    catch (const mysqlx::Error& err)
+    {
+        lastError_ = err.what();
+        return false;
+    }
+}
+
+bool DatabaseConnector::UpdateCharacterXP(int CharId, int CurrentXP, int MaxExpToLvl)
+{
+    if (!session) return false;
+    try
+    {
+        std::string sql = "UPDATE character_progression SET currExp = " + std::to_string(CurrentXP);
+        if (MaxExpToLvl >= 0) {
+            sql += ", maxExpToLvl  = " + std::to_string(MaxExpToLvl);
+        }
+        sql += " WHERE character_id = " + std::to_string(CharId) + ";";
+        session->sql(sql).execute();
+        return true;
+    }
+    catch (const mysqlx::Error& err)
+    {
+        lastError_ = err.what();
+        return false;
+    }
+}
+
+bool DatabaseConnector::UpdateLevelUpSnapshot(int CharId, int Level, int MaxExpToLvl, int MaxHpFromLvls, int MaxMpFromLvls, int UnspentAP, int CurrentXP)
+{
+    if (!session) return false;
+    try
+    {
+        // Update the character's level in characters_table
         {
-            // Normalize column name to lowercase
-            std::string statName = statNameRaw;
-            std::transform(statName.begin(), statName.end(), statName.begin(),
-                [](unsigned char c) { return std::tolower(c); });
+            std::string sql = "UPDATE characters_table SET level = " + std::to_string(Level) +
+                " WHERE id = " + std::to_string(CharId) + ";";
+            session->sql(sql).execute();
+        }
+        // Update progression fields in character_progression
+        {
+            std::string sql =
+                "UPDATE character_progression SET "
+                "maxExpToLvl = " + std::to_string(MaxExpToLvl) +
+                ", maxHpFromLvls = " + std::to_string(MaxHpFromLvls) +
+                ", maxMpFromLvls = " + std::to_string(MaxMpFromLvls) +
+                ", unUsedAp = " + std::to_string(UnspentAP) +
+                ", currExp = " + std::to_string(CurrentXP) +
+                " WHERE character_id = " + std::to_string(CharId) + ";";
+            session->sql(sql).execute();
+        }
+        return true;
+    }
+    catch (const mysqlx::Error& err)
+    {
+        lastError_ = err.what();
+        return false;
+    }
+}
 
+bool DatabaseConnector::UpdateCurrentHP(int CharId, int CurrHP)
+{
+    if (!session) return false;
+    try
+    {
+        std::string sql = "UPDATE character_progression SET currHp = " + std::to_string(CurrHP) +
+            " WHERE character_id = " + std::to_string(CharId) + ";";
+        session->sql(sql).execute();
+        return true;
+    }
+    catch (const mysqlx::Error& err)
+    {
+        lastError_ = err.what();
+        return false;
+    }
+}
+
+bool DatabaseConnector::UpdateCurrentMP(int CharId, int CurrMP)
+{
+    if (!session) return false;
+    try
+    {
+        std::string sql = "UPDATE character_progression SET currMp = " + std::to_string(CurrMP) +
+            " WHERE character_id = " + std::to_string(CharId) + ";";
+        session->sql(sql).execute();
+        return true;
+    }
+    catch (const mysqlx::Error& err)
+    {
+        lastError_ = err.what();
+        return false;
+    }
+}
+
+bool DatabaseConnector::UpdateBaseStats(int CharId, const std::map<std::string, int>& Stats)
+{
+    if (!session || Stats.empty()) return false;
+    try
+    {
+        std::string sql = "UPDATE character_progression SET ";
+        bool first = true;
+        for (const auto& kv : Stats)
+        {
+            std::string col = kv.first;
+            std::transform(col.begin(), col.end(), col.begin(), [](unsigned char c){ return std::tolower(c); });
             if (!first) sql += ", ";
-            sql += statName + " = " + std::to_string(value);
+            sql += col + " = " + std::to_string(kv.second);
             first = false;
         }
-
         sql += " WHERE character_id = " + std::to_string(CharId) + ";";
-
         session->sql(sql).execute();
         return true;
     }

@@ -1,2 +1,3 @@
-﻿  DatabaseConnector.cpp
+﻿  DatabaseConnectionPool.cpp
+  DatabaseConnector.cpp
   DbStaticLib.vcxproj -> C:\Users\Sagi\source\repos\DbStaticLib\x64\Release\DbStaticLib.lib

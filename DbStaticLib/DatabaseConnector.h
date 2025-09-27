@@ -32,11 +32,26 @@ public:
 
     // Gameplay maps related operations
     std::optional<std::tuple<std::string, std::string, int, std::string,
-        int, int, int, int, int, int>>GetCharGameplayDataById(int charId);
+        int, int, int, int, int, int,
+        int, int, int, int, int, int, int, int>> GetCharGameplayDataById(int charId);
     std::string GetLastError() const;
     // Persistent writer taskss
     bool UpdateCharacterLevel(int CharId, int LvlToSet);
-    bool UpdateCharacterStats(int CharId, const std::map<std::string, int>& Stats);
+
+    // Dedicated updates per job (mirrors TwoDSSG write-behind usage)
+    bool UpdateLevelUpSnapshot(int CharId, int Level, int MaxExpToLvl, int MaxHpFromLvls, int MaxMpFromLvls, int UnspentAP, int CurrentXP);
+
+    // Current vitals
+    bool UpdateCurrentHP(int CharId, int CurrHP);
+    bool UpdateCurrentMP(int CharId, int CurrMP);
+
+    // Base stats (expects lowercase keys: "str","dex","wisd","luk","pur","vic")
+    bool UpdateBaseStats(int CharId, const std::map<std::string, int>& Stats);
+
+    // Other explicit updaters
+    bool UpdateCharacterAchievements(int CharId, int HighestMinRange, int HighestMaxRange);
+    bool UpdateCharacterUnspentAP(int CharId, int UnspentAP);
+    bool UpdateCharacterXP(int CharId, int CurrentXP, int MaxExpToLvl);
 
 
     // Connection related operations
